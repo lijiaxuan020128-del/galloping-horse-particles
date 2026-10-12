@@ -9,6 +9,8 @@
  * 修改：保留原作粒子运动公式，增加周期性奔马聚散。
  * 马匹轮廓来自你提供的视频，已简化为连续动作帧。
  * 微调：头颈俯仰关键帧对照原视频校正（见文件末尾，可整段删除还原）。
+ * 交互：散开时点击 → 粒子立刻聚成马；已成马时点击 →
+ *       鼠标附近的粒子被冲击波打散，随后归位回马形。
  * 噪声函数使用 Shox 1.1.0。
  */
 
@@ -255,6 +257,7 @@ async function launchHorseParticles() {
     uniform float uGather;
     uniform float uPose;
     uniform vec2 uRandom;
+    uniform vec3 uShocks[4];    // xy 点击位置（裁剪空间），z 波龄（秒，999 = 未使用）
     uniform highp sampler2D uTargets;
 
     out vec2 vPosition;
@@ -283,6 +286,25 @@ async function launchHorseParticles() {
 
       vec2 rnd = hash22(vec2(coord));
 
+      // 点击冲击波强度：0 ~ 1，波前处最强，1.2 秒内衰减消失
+      float shock = 0.;
+
+      for (int i = 0; i < 4; i++) {
+        float age = uShocks[i].z;
+
+        if (age > 1.2) continue;
+
+        vec2 d = aPosition - uShocks[i].xy;
+        float dist = length(d) + 1e-4;
+        float spread =
+          1. - pow(1. - min(age / 0.55, 1.), 2.);
+        float radius = 0.06 + 0.5 * spread;
+        float band =
+          exp(-pow((dist - radius) / 0.18, 2.));
+
+        shock = max(shock, band * (1. - age / 1.2));
+      }
+
       // 原作的出生、衰减与运动公式。
       if (aAge >= aLife) {
         float x = snoise(
@@ -310,6 +332,24 @@ async function launchHorseParticles() {
         vAge = aAge + dt;
         vLife = aLife;
         vVel = .95 * aVel + force * dt * 3.;
+      }
+
+      // 冲击波扫过：给波前处的粒子一个向外的速度脉冲
+      for (int i = 0; i < 4; i++) {
+        float age = uShocks[i].z;
+
+        if (age > 1.2) continue;
+
+        vec2 d = vPosition - uShocks[i].xy;
+        float dist = length(d) + 1e-4;
+        float spread =
+          1. - pow(1. - min(age / 0.55, 1.), 2.);
+        float radius = 0.06 + 0.5 * spread;
+        float band =
+          exp(-pow((dist - radius) / 0.18, 2.));
+
+        vVel += (d / dist) *
+          band * (1. - age / 1.2) * 1.1;
       }
 
       // 获取相邻两帧的马匹位置。
@@ -342,6 +382,10 @@ async function launchHorseParticles() {
 
       // 少量粒子继续在马匹周围流动。
       float weight = uGather * step(.025, rnd.x);
+
+      // 被冲击波打中的粒子暂时挣脱马形引力，
+      // 波过去后引力恢复，自动归位（打散后重回马形）
+      weight *= 1. - shock * .95;
 
       // 同一批粒子逐渐聚拢，散开后恢复云团运动。
       vec2 continuous = mix(
@@ -462,6 +506,7 @@ async function launchHorseParticles() {
     "uGather",
     "uPose",
     "uRandom",
+    "uShocks[0]",
     "uTargets"
   ]) {
     u[name] = gl.getUniformLocation(update, name);
@@ -556,6 +601,47 @@ async function launchHorseParticles() {
     cfg.runSeconds +
     cfg.scatterSeconds;
 
+  // ===========================
+  // 交互：鼠标点击
+  //   · 散开（自由流动）阶段点击 → 粒子立刻聚集成马
+  //   · 聚合 / 奔跑（已成马）阶段点击 → 鼠标附近的粒子
+  //     被冲击波打散，随后自动归位回马形
+  //   · 消散阶段点击 → 立刻重新聚集成马
+  // ===========================
+  const MAX_SHOCKS = 4;   // 同时存在的冲击波上限
+  const SHOCK_LIFE = 1.2; // 冲击波寿命（秒）
+
+  const shockData = new Float32Array(MAX_SHOCKS * 3);
+  const shocks = [];
+  let timeSkip = 0;   // 时间线偏移（秒）：点击跳段用
+  let lastLocal = 0;  // 当前循环内的时刻，animate 每帧更新
+
+  view.style.cursor = "pointer";
+
+  view.addEventListener("pointerdown", (event) => {
+    const rect = view.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    const y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
+
+    const runStart = cfg.freeSeconds + cfg.gatherSeconds;
+    const scatterStart = runStart + cfg.runSeconds;
+
+    if (lastLocal < cfg.freeSeconds) {
+      // 散开中：点击立刻聚集成马
+      timeSkip += cfg.freeSeconds - lastLocal;
+    } else if (lastLocal >= scatterStart) {
+      // 消散中：点击立刻重新聚集成马
+      timeSkip -= lastLocal - runStart;
+    } else {
+      // 已成马：鼠标附近的粒子被冲击波打散后归位
+      shocks.push({ x, y, t: 0 });
+
+      if (shocks.length > MAX_SHOCKS) {
+        shocks.shift();
+      }
+    }
+  });
+
   // 在控制台打印当前设置的实际时间线，改完 HORSE_SETTINGS 刷新即可看到
   console.log(
     "[奔马时间线] 循环 " + cycle + " 秒：" +
@@ -575,6 +661,17 @@ async function launchHorseParticles() {
   function animate(now) {
     const elapsed = (now - start) / 1000;
     const local = elapsed % cycle;
+
+    lastLocal = local;
+
+    // 冲击波计时与清理
+    for (let i = shocks.length - 1; i >= 0; i--) {
+      shocks[i].t += 1 / 60;
+
+      if (shocks[i].t > SHOCK_LIFE) {
+        shocks.splice(i, 1);
+      }
+    }
 
     // local 为当前循环内的时刻，对照 HORSE_SETTINGS 的注释：
     //   [0, free)                                散开，gather = 0
@@ -614,6 +711,23 @@ async function launchHorseParticles() {
     gl.uniform1f(u.uTime, tick / 60);
     gl.uniform1f(u.uGather, gather);
     gl.uniform1f(u.uPose, pose);
+
+    // 上传点击冲击波（最多 4 个；空槽位用 t = 999 停用）
+    shockData.fill(0);
+
+    for (let i = 0; i < MAX_SHOCKS; i++) {
+      const s = shocks[i];
+
+      if (s) {
+        shockData[i * 3] = s.x;
+        shockData[i * 3 + 1] = s.y;
+        shockData[i * 3 + 2] = s.t;
+      } else {
+        shockData[i * 3 + 2] = 999;
+      }
+    }
+
+    gl.uniform3fv(u["uShocks[0]"], shockData);
 
     gl.bindVertexArray(vaos[read]);
 
