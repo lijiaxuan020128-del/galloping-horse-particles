@@ -258,6 +258,8 @@ async function launchHorseParticles() {
     uniform float uPose;
     uniform vec2 uRandom;
     uniform vec3 uShocks[4];    // xy 点击位置（裁剪空间），z 波龄（秒，999 = 未使用）
+
+    const float SHOCK_LIFE = 1.6;  // 冲击波寿命（秒），与 CPU 侧保持一致
     uniform highp sampler2D uTargets;
 
     out vec2 vPosition;
@@ -286,23 +288,29 @@ async function launchHorseParticles() {
 
       vec2 rnd = hash22(vec2(coord));
 
-      // 点击冲击波强度：0 ~ 1，波前处最强，1.2 秒内衰减消失
+      // 点击冲击波：波前踢一脚；波扫过的圆盘内粒子被持续释放，
+      // 恢复成聚马前的自由漂移，随波衰减再被马形收回归位
       float shock = 0.;
 
       for (int i = 0; i < 4; i++) {
         float age = uShocks[i].z;
 
-        if (age > 1.2) continue;
+        if (age > SHOCK_LIFE) continue;
 
         vec2 d = aPosition - uShocks[i].xy;
         float dist = length(d) + 1e-4;
         float spread =
           1. - pow(1. - min(age / 0.55, 1.), 2.);
         float radius = 0.06 + 0.5 * spread;
+        float fade = 1. - age / SHOCK_LIFE;
+
+        // 波前环最强；已扫过的圆盘内保持释放
         float band =
           exp(-pow((dist - radius) / 0.18, 2.));
+        float swept =
+          smoothstep(radius, radius - 0.12, dist);
 
-        shock = max(shock, band * (1. - age / 1.2));
+        shock = max(shock, max(band, swept) * fade);
       }
 
       // 原作的出生、衰减与运动公式。
@@ -338,7 +346,7 @@ async function launchHorseParticles() {
       for (int i = 0; i < 4; i++) {
         float age = uShocks[i].z;
 
-        if (age > 1.2) continue;
+        if (age > SHOCK_LIFE) continue;
 
         vec2 d = vPosition - uShocks[i].xy;
         float dist = length(d) + 1e-4;
@@ -349,7 +357,7 @@ async function launchHorseParticles() {
           exp(-pow((dist - radius) / 0.18, 2.));
 
         vVel += (d / dist) *
-          band * (1. - age / 1.2) * 1.1;
+          band * (1. - age / SHOCK_LIFE) * 1.1;
       }
 
       // 获取相邻两帧的马匹位置。
@@ -384,7 +392,7 @@ async function launchHorseParticles() {
       float weight = uGather * step(.025, rnd.x);
 
       // 被冲击波打中的粒子暂时挣脱马形引力，
-      // 波过去后引力恢复，自动归位（打散后重回马形）
+      // 恢复散开前的自由漂移，波衰减后归位（打散后重回马形）
       weight *= 1. - shock * .95;
 
       // 同一批粒子逐渐聚拢，散开后恢复云团运动。
@@ -609,7 +617,7 @@ async function launchHorseParticles() {
   //   · 消散阶段点击 → 立刻重新聚集成马
   // ===========================
   const MAX_SHOCKS = 4;   // 同时存在的冲击波上限
-  const SHOCK_LIFE = 1.2; // 冲击波寿命（秒）
+  const SHOCK_LIFE = 1.6; // 冲击波寿命（秒），与着色器内保持一致
 
   const shockData = new Float32Array(MAX_SHOCKS * 3);
   const shocks = [];
