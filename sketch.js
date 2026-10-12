@@ -259,7 +259,7 @@ async function launchHorseParticles() {
     uniform vec2 uRandom;
     uniform vec3 uShocks[4];    // xy 点击位置（裁剪空间），z 波龄（秒，999 = 未使用）
 
-    const float SHOCK_LIFE = 1.6;  // 冲击波寿命（秒），与 CPU 侧保持一致
+    const float SHOCK_LIFE = 3.0;  // 冲击波寿命（秒），与 CPU 侧保持一致
     uniform highp sampler2D uTargets;
 
     out vec2 vPosition;
@@ -304,11 +304,11 @@ async function launchHorseParticles() {
         float radius = 0.06 + 0.5 * spread;
         float fade = 1. - age / SHOCK_LIFE;
 
-        // 波前环最强；已扫过的圆盘内保持释放
+        // 波前环最强；已扫过的圆盘（含外漂余量）内保持释放
         float band =
           exp(-pow((dist - radius) / 0.18, 2.));
         float swept =
-          smoothstep(radius, radius - 0.12, dist);
+          smoothstep(radius + 0.35, radius - 0.12, dist);
 
         shock = max(shock, max(band, swept) * fade);
       }
@@ -339,7 +339,18 @@ async function launchHorseParticles() {
         vPosition = aPosition + aVel * dt;
         vAge = aAge + dt;
         vLife = aLife;
-        vVel = .95 * aVel + force * dt * 3.;
+
+        // 被冲击波释放的粒子：更小的阻尼 + 更强的噪声力，
+        // 恢复成聚马前云团的游动方式，而不是被炸开后停住
+        float damp = mix(.95, .98, shock);
+        float stir = mix(3., 5.5, shock);
+
+        vVel = damp * aVel + force * dt * stir;
+
+        // 限制被释放粒子的速度，避免漂出画面
+        if (shock > 0.) {
+          vVel = clamp(vVel, vec2(-1.2), vec2(1.2));
+        }
       }
 
       // 冲击波扫过：给波前处的粒子一个向外的速度脉冲
@@ -357,7 +368,7 @@ async function launchHorseParticles() {
           exp(-pow((dist - radius) / 0.18, 2.));
 
         vVel += (d / dist) *
-          band * (1. - age / SHOCK_LIFE) * 1.1;
+          band * (1. - age / SHOCK_LIFE) * 0.5;
       }
 
       // 获取相邻两帧的马匹位置。
@@ -617,7 +628,7 @@ async function launchHorseParticles() {
   //   · 消散阶段点击 → 立刻重新聚集成马
   // ===========================
   const MAX_SHOCKS = 4;   // 同时存在的冲击波上限
-  const SHOCK_LIFE = 1.6; // 冲击波寿命（秒），与着色器内保持一致
+  const SHOCK_LIFE = 3.0; // 冲击波寿命（秒），与着色器内保持一致
 
   const shockData = new Float32Array(MAX_SHOCKS * 3);
   const shocks = [];
