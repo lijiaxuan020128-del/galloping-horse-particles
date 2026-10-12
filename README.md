@@ -9,6 +9,16 @@
 
 ## 在线观看
 
+### 尘埃（滑动版）
+
+**[点击直接打开滑动交互展示页](https://lijiaxuan020128-del.github.io/galloping-horse-particles/hover/)**
+
+默认持续奔跑；鼠标滑过时，附近粒子自由游动约 3 秒，再逐渐归位。无需点击、无需登录，其他电脑也可以通过链接观看。
+
+源项目：https://editor.p5js.org/lijiaxuan020128/full/jqPcnHcJi
+
+### 原版：周期聚散与点击交互
+
 <https://lijiaxuan020128-del.github.io/galloping-horse-particles/>
 
 ## 交互
