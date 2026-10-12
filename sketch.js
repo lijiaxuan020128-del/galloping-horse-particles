@@ -660,7 +660,10 @@ async function launchHorseParticles() {
 
   function animate(now) {
     const elapsed = (now - start) / 1000;
-    const local = elapsed % cycle;
+    // 时间线 = 总时间 + 点击跳段偏移；步伐相位仍由 elapsed 驱动，
+    // 所以跳段不会打断奔跑的连续性
+    const local =
+      ((elapsed + timeSkip) % cycle + cycle) % cycle;
 
     lastLocal = local;
 
